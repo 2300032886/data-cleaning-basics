@@ -1,7 +1,10 @@
+"""
+Data cleaning utilities — pure NumPy/Pandas, no scipy or scikit-learn.
+Normalization and standardization are implemented manually so this module
+works in Vercel's Python serverless environment without heavy binary deps.
+"""
 import pandas as pd
 import numpy as np
-from scipy import stats
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 def detect_missing(df: pd.DataFrame) -> dict:
@@ -24,7 +27,7 @@ def fill_missing(df: pd.DataFrame, strategy: str = "mean") -> pd.DataFrame:
     for col in df.columns:
         if df[col].isnull().sum() == 0:
             continue
-        if df[col].dtype in [np.float64, np.int64, float, int]:
+        if pd.api.types.is_numeric_dtype(df[col]):
             if strategy == "mean":
                 df[col] = df[col].fillna(df[col].mean())
             elif strategy == "median":
@@ -84,22 +87,30 @@ def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalize_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Min-Max normalization using pure NumPy (no scikit-learn)."""
     df = df.copy()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) == 0:
-        return df
-    scaler = MinMaxScaler()
-    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+    for col in numeric_cols:
+        col_min = df[col].min()
+        col_max = df[col].max()
+        if col_max - col_min != 0:
+            df[col] = (df[col] - col_min) / (col_max - col_min)
+        else:
+            df[col] = 0.0
     return df
 
 
 def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Z-score standardization using pure NumPy (no scikit-learn)."""
     df = df.copy()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) == 0:
-        return df
-    scaler = StandardScaler()
-    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+    for col in numeric_cols:
+        mean = df[col].mean()
+        std = df[col].std()
+        if std != 0:
+            df[col] = (df[col] - mean) / std
+        else:
+            df[col] = 0.0
     return df
 
 
@@ -122,8 +133,7 @@ def compute_quality_score(df: pd.DataFrame) -> dict:
         upper = Q3 + 1.5 * IQR
         outlier_counts += int(((series < lower) | (series > upper)).sum())
     outlier_ratio = outlier_counts / max(numeric_cells, 1)
-    score = 100 - (missing_ratio * 40 + dup_ratio * 30 + outlier_ratio * 30)
-    score = round(max(0.0, min(100.0, score)), 1)
+    score = round(max(0.0, min(100.0, 100 - (missing_ratio * 40 + dup_ratio * 30 + outlier_ratio * 30))), 1)
     if score >= 90: grade = "A"
     elif score >= 75: grade = "B"
     elif score >= 60: grade = "C"
